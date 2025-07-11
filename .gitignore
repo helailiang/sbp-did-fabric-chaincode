@@ -1,0 +1,7 @@
+.vscode/
+*.exe
+logs/
+conf/
+samples/
+*copy.go
+/.idea/
