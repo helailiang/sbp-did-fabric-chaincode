@@ -19,8 +19,8 @@
 
 ## 项目结构
 
+```shell
 chaincode/
-│
 ├── accesscontrol/
 │   └── chaincode.go
 ├── did/
@@ -33,6 +33,7 @@ chaincode/
 ├── common/
 │   └── utils.go         // 权限校验、事件封装等工具
 ├── main.go              // 初始化注册入口  
+```
 
 ## 三、数据结构
 
