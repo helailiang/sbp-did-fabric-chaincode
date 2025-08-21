@@ -4,28 +4,19 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+
+	"github.com/duke-git/lancet/v2/slice"
+
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/hyperledger/fabric-chaincode-go/pkg/cid"
-	"github.com/hyperledger/fabric-chaincode-go/shim"
-	"github.com/hyperledger/fabric-contract-api-go/contractapi"
-	"sbp-did-chaincode/chaincode/accesscontrol"
+	"github.com/hyperledger/fabric-chaincode-go/v2/pkg/cid"
+	"github.com/hyperledger/fabric-chaincode-go/v2/shim"
+	"github.com/hyperledger/fabric-contract-api-go/v2/contractapi"
 )
 
 // 校验是否为管理员
-func IsAdmin(ctx contractapi.TransactionContextInterface) bool {
-	// TODO: 实现管理员校验逻辑
-	return false
-}
-
-// 权限校验工具
-func CheckPermission(ctx contractapi.TransactionContextInterface, account, function string) bool {
-	// TODO: 实现权限校验逻辑
-	acl := new(accesscontrol.AccessControlChaincode)
-	funcB, _ := acl.HasSelectorPermission(ctx, account, function)
-	if funcB != true {
-		return funcB
-	}
-	return false
+func IsAdmin(ctx contractapi.TransactionContextInterface, Admins []string) bool {
+	caller := GetCaller(ctx)
+	return slice.Contain(Admins, caller)
 }
 
 // 事件封装工具
