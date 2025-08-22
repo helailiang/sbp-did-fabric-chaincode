@@ -2,13 +2,13 @@ package main
 
 import (
 	"fmt"
-	"sbp-did-chaincode/chaincode/accesscontrol"
-	"sbp-did-chaincode/chaincode/common"
-	"sbp-did-chaincode/chaincode/did"
-	"sbp-did-chaincode/chaincode/issuer"
-	"sbp-did-chaincode/chaincode/vc"
+	"sbp-did-chaincode/accesscontrol"
+	"sbp-did-chaincode/common"
+	"sbp-did-chaincode/did"
+	"sbp-did-chaincode/issuer"
+	"sbp-did-chaincode/vc"
 
-	"github.com/hyperledger/fabric-contract-api-go/v2/contractapi"
+	"github.com/hyperledger/fabric-contract-api-go/contractapi"
 )
 
 func main() {
@@ -33,11 +33,11 @@ func main() {
 		issuerChaincode,
 		vcChaincode,
 	)
-	chaincode.DefaultContract = didChaincode.GetName()
 	if err != nil {
 		panic(fmt.Errorf("Error create SBP-DID Chaincode: %s", err))
 		return
 	}
+	chaincode.DefaultContract = didChaincode.GetName()
 	if err := chaincode.Start(); err != nil {
 		panic(fmt.Errorf("Error starting SBP-DID Chaincode: %s", err))
 	}

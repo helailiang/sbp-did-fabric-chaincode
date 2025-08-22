@@ -1,16 +1,14 @@
 package common
 
 import (
-	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 
 	"github.com/duke-git/lancet/v2/slice"
-
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/hyperledger/fabric-chaincode-go/v2/pkg/cid"
-	"github.com/hyperledger/fabric-chaincode-go/v2/shim"
-	"github.com/hyperledger/fabric-contract-api-go/v2/contractapi"
+	//"github.com/ethereum/go-ethereum/common"
+	"github.com/hyperledger/fabric-chaincode-go/pkg/cid"
+	"github.com/hyperledger/fabric-chaincode-go/shim"
+	"github.com/hyperledger/fabric-contract-api-go/contractapi"
 )
 
 // 校验是否为管理员
@@ -42,17 +40,17 @@ func GetMsgSenderSKI(stub shim.ChaincodeStubInterface) (string, error) {
 	return hex.EncodeToString(cert.SubjectKeyId), nil
 }
 
-func GetMsgSenderAddress(stub shim.ChaincodeStubInterface) (common.Address, error) {
-	cert, err := cid.GetX509Certificate(stub)
-	if err != nil {
-		return common.Address{}, fmt.Errorf("failed to parse CA: %v", err)
-	}
-	return GetAddrFromRaw(cert.RawSubjectPublicKeyInfo), nil
-}
-
-func GetAddrFromRaw(raw []byte) common.Address {
-	hash := sha256.New()
-	hash.Write(raw)
-	addr := common.BytesToAddress(hash.Sum(nil)[12:])
-	return addr
-}
+//func GetMsgSenderAddress(stub shim.ChaincodeStubInterface) (common.Address, error) {
+//	cert, err := cid.GetX509Certificate(stub)
+//	if err != nil {
+//		return common.Address{}, fmt.Errorf("failed to parse CA: %v", err)
+//	}
+//	return GetAddrFromRaw(cert.RawSubjectPublicKeyInfo), nil
+//}
+//
+//func GetAddrFromRaw(raw []byte) common.Address {
+//	hash := sha256.New()
+//	hash.Write(raw)
+//	addr := common.BytesToAddress(hash.Sum(nil)[12:])
+//	return addr
+//}

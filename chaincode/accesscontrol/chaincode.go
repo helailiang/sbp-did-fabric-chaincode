@@ -22,12 +22,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 
-	"sbp-did-chaincode/chaincode/common"
+	"sbp-did-chaincode/common"
 
-	"github.com/hyperledger/fabric-contract-api-go/v2/contractapi"
+	"github.com/hyperledger/fabric-contract-api-go/contractapi"
 )
 
 // ProjectConfig 项目配置结构体
@@ -84,18 +85,15 @@ func (c *PermissionChaincode) InitProject(
 	isPrivate, enableIssuerVerification, enableVcVerification, enableWritePermission bool,
 	serviceCode, projectCode string,
 ) error {
-	//// 权限校验：只有管理员可以初始化项目
-	//if !common.IsAdmin(ctx) {
-	//	return errors.New("only admin can init project")
-	//}
-
 	// 参数校验：关键参数不能为空
 	if strings.TrimSpace(method) == "" || strings.TrimSpace(serviceCode) == "" || strings.TrimSpace(projectCode) == "" {
 		return errors.New("method, serviceCode, projectCode cannot be empty")
 	}
-
+	log.Println("链码InitProject")
 	// 获取调用者身份作为初始管理员
+	log.Printf("初始化项目配置 - method: %s, isPrivate: %t, enableIssuerVerification: %t, enableVcVerification: %t, enableWritePermission: %t, serviceCode: %s, projectCode: %s", method, isPrivate, enableIssuerVerification, enableVcVerification, enableWritePermission, serviceCode, projectCode)
 	caller := common.GetCaller(ctx)
+	log.Printf("项目初始化 - 调用者: %s", caller)
 
 	// 构建项目配置对象
 	cfg := common.ProjectConfig{
@@ -113,8 +111,10 @@ func (c *PermissionChaincode) InitProject(
 	// 序列化配置并存储到链上
 	b, _ := json.Marshal(cfg)
 	if err := ctx.GetStub().PutState(projectConfigKey, b); err != nil {
+		log.Printf("项目配置存储失败: %v", err)
 		return err
 	}
+	log.Printf("项目配置存储成功 - 配置键: %s", projectConfigKey)
 	//  设置全局权限检查器
 	common.SetGlobalPermissionChecker(c)
 	// 触发项目初始化事件
@@ -150,181 +150,236 @@ func (c *PermissionChaincode) ChangePrivateStatus(ctx contractapi.TransactionCon
 	// 获取当前项目配置
 	cfg, err := c.getProjectConfig(ctx)
 	if err != nil {
+		log.Printf("获取项目配置失败: %v", err)
 		return err
 	}
 
 	// 权限校验：只有管理员可以更改项目状态
 	if !common.IsAdmin(ctx, cfg.Admins) {
+		log.Printf("权限校验失败 - 调用者: %s, 操作: ChangePrivateStatus", common.GetCaller(ctx))
 		return errors.New("only admin can change private status")
 	}
+	log.Printf("权限校验通过 - 调用者: %s, 操作: ChangePrivateStatus", common.GetCaller(ctx))
 
 	// 状态校验：避免重复设置相同状态
 	if cfg.IsProjectPrivate == isPrivate {
+		log.Printf("状态校验失败 - 当前私有状态: %t, 目标私有状态: %t", cfg.IsProjectPrivate, isPrivate)
 		return errors.New("private status is already the same")
 	}
+	log.Printf("状态校验通过 - 当前私有状态: %t, 目标私有状态: %t", cfg.IsProjectPrivate, isPrivate)
 
 	// 更新项目配置
 	cfg.IsProjectPrivate = isPrivate
-	//cfg.IsPrivate = isPrivate
+	log.Printf("项目配置更新 - 私有状态: %t", isPrivate)
 
 	// 序列化并存储到链上
 	b, _ := json.Marshal(cfg)
 	if err := ctx.GetStub().PutState(projectConfigKey, b); err != nil {
+		log.Printf("项目配置更新存储失败: %v", err)
 		return err
 	}
+	log.Printf("项目配置更新存储成功")
 
 	// 触发状态变更事件
-	//payload, _ := json.Marshal(map[string]interface{}{"serviceCode": cfg.ServiceCode, "projectCode": cfg.ProjectCode, "isPrivate": isPrivate})
 	payload, _ := json.Marshal(&common.ProjectConfig{
 		ServiceCode:      cfg.ServiceCode,
 		ProjectCode:      cfg.ProjectCode,
 		IsProjectPrivate: isPrivate,
 	})
+	log.Printf("触发私有状态变更事件 - 新状态: %t", isPrivate)
 	return common.EmitEvent(ctx, "PrivateStatusChanged", payload)
 }
 
 // ChangeMethod 更改method名称
 func (c *PermissionChaincode) ChangeMethod(ctx contractapi.TransactionContextInterface, method string) error {
+	log.Printf("开始更改项目method - 新method: %s", method)
 	cfg, err := c.getProjectConfig(ctx)
 	if err != nil {
+		log.Printf("获取项目配置失败: %v", err)
 		return err
 	}
 	if !common.IsAdmin(ctx, cfg.Admins) {
+		log.Printf("权限校验失败 - 调用者: %s, 操作: ChangeMethod", common.GetCaller(ctx))
 		return errors.New("only admin can change method")
 	}
+	log.Printf("权限校验通过 - 调用者: %s, 操作: ChangeMethod", common.GetCaller(ctx))
+
 	if cfg.Paused {
+		log.Printf("项目状态校验失败 - 项目已停用")
 		return errors.New("project is paused")
 	}
 	if strings.TrimSpace(method) == "" {
+		log.Printf("参数校验失败 - method为空")
 		return errors.New("method cannot be empty")
 	}
 	if cfg.Method == method {
+		log.Printf("状态校验失败 - method已相同: %s", method)
 		return errors.New("method is already the same")
 	}
 
 	cfg.Method = method
+	log.Printf("项目配置更新 - 新method: %s", method)
 	b, _ := json.Marshal(cfg)
 	if err := ctx.GetStub().PutState(projectConfigKey, b); err != nil {
+		log.Printf("项目配置更新存储失败: %v", err)
 		return err
 	}
+	log.Printf("项目配置更新存储成功")
 
-	//payload, _ := json.Marshal(map[string]interface{}{"method": method})
 	payload, _ := json.Marshal(&common.ProjectConfig{
 		ServiceCode: cfg.ServiceCode,
 		ProjectCode: cfg.ProjectCode,
 		Method:      method,
 	})
+	log.Printf("触发method变更事件 - 新method: %s", method)
 	return common.EmitEvent(ctx, "MethodChanged", payload)
 }
 
 // ChangeEnableVCTemplateVerification 更改VC模板验证开关
 func (c *PermissionChaincode) ChangeEnableVCTemplateVerification(ctx contractapi.TransactionContextInterface, enableVCTemplateVerification bool) error {
+	log.Printf("开始更改VC模板验证开关 - 新状态: %t", enableVCTemplateVerification)
 	cfg, err := c.getProjectConfig(ctx)
 	if err != nil {
+		log.Printf("获取项目配置失败: %v", err)
 		return err
 	}
 	if !common.IsAdmin(ctx, cfg.Admins) {
+		log.Printf("权限校验失败 - 调用者: %s, 操作: ChangeEnableVCTemplateVerification", common.GetCaller(ctx))
 		return errors.New("only admin can change VC template verification")
 	}
+	log.Printf("权限校验通过 - 调用者: %s, 操作: ChangeEnableVCTemplateVerification", common.GetCaller(ctx))
+
 	if cfg.Paused {
+		log.Printf("项目状态校验失败 - 项目已停用")
 		return errors.New("project is paused")
 	}
 	if cfg.EnableVCTemplateVerification == enableVCTemplateVerification {
+		log.Printf("状态校验失败 - VC模板验证状态已相同: %t", enableVCTemplateVerification)
 		return errors.New("VC template verification status is already the same")
 	}
 
 	cfg.EnableVCTemplateVerification = enableVCTemplateVerification
+	log.Printf("项目配置更新 - VC模板验证开关: %t", enableVCTemplateVerification)
 	b, _ := json.Marshal(cfg)
 	if err := ctx.GetStub().PutState(projectConfigKey, b); err != nil {
+		log.Printf("项目配置更新存储失败: %v", err)
 		return err
 	}
+	log.Printf("项目配置更新存储成功")
 
-	//payload, _ := json.Marshal(map[string]interface{}{"enableVCTemplateVerification": enableVCTemplateVerification})
 	payload, _ := json.Marshal(&common.ProjectConfig{
 		ServiceCode:                  cfg.ServiceCode,
 		ProjectCode:                  cfg.ProjectCode,
 		EnableVCTemplateVerification: enableVCTemplateVerification,
 	})
+	log.Printf("触发VC模板验证开关变更事件 - 新状态: %t", enableVCTemplateVerification)
 	return common.EmitEvent(ctx, "EnableVCTemplateVerificationChanged", payload)
 }
 
 // ChangeEnableIssuerVerification 更改Issuer验证开关
 func (c *PermissionChaincode) ChangeEnableIssuerVerification(ctx contractapi.TransactionContextInterface, enableIssuerVerification bool) error {
+	log.Printf("开始更改Issuer验证开关 - 新状态: %t", enableIssuerVerification)
 	cfg, err := c.getProjectConfig(ctx)
 	if err != nil {
+		log.Printf("获取项目配置失败: %v", err)
 		return err
 	}
 	if !common.IsAdmin(ctx, cfg.Admins) {
+		log.Printf("权限校验失败 - 调用者: %s, 操作: ChangeEnableIssuerVerification", common.GetCaller(ctx))
 		return errors.New("only admin can change issuer verification")
 	}
+	log.Printf("权限校验通过 - 调用者: %s, 操作: ChangeEnableIssuerVerification", common.GetCaller(ctx))
+
 	if cfg.Paused {
+		log.Printf("项目状态校验失败 - 项目已停用")
 		return errors.New("project is paused")
 	}
 	if cfg.EnableIssuerVerification == enableIssuerVerification {
+		log.Printf("状态校验失败 - Issuer验证状态已相同: %t", enableIssuerVerification)
 		return errors.New("issuer verification status is already the same")
 	}
 
 	cfg.EnableIssuerVerification = enableIssuerVerification
+	log.Printf("项目配置更新 - Issuer验证开关: %t", enableIssuerVerification)
 	b, _ := json.Marshal(cfg)
 	if err := ctx.GetStub().PutState(projectConfigKey, b); err != nil {
+		log.Printf("项目配置更新存储失败: %v", err)
 		return err
 	}
+	log.Printf("项目配置更新存储成功")
 
-	//payload, _ := json.Marshal(map[string]interface{}{"enableIssuerVerification": enableIssuerVerification})
 	payload, _ := json.Marshal(&common.ProjectConfig{
 		ServiceCode:              cfg.ServiceCode,
 		ProjectCode:              cfg.ProjectCode,
 		EnableIssuerVerification: enableIssuerVerification,
 	})
+	log.Printf("触发Issuer验证开关变更事件 - 新状态: %t", enableIssuerVerification)
 	return common.EmitEvent(ctx, "EnableIssuerVerificationChanged", payload)
 }
 
 // ChangeEnableWritePermission 更改写权限状态
 func (c *PermissionChaincode) ChangeEnableWritePermission(ctx contractapi.TransactionContextInterface, enableWritePermission bool) error {
+	log.Printf("开始更改写权限状态 - 新状态: %t", enableWritePermission)
 	cfg, err := c.getProjectConfig(ctx)
 	if err != nil {
+		log.Printf("获取项目配置失败: %v", err)
 		return err
 	}
 	if !common.IsAdmin(ctx, cfg.Admins) {
+		log.Printf("权限校验失败 - 调用者: %s, 操作: ChangeEnableWritePermission", common.GetCaller(ctx))
 		return errors.New("only admin can change write permission")
 	}
+	log.Printf("权限校验通过 - 调用者: %s, 操作: ChangeEnableWritePermission", common.GetCaller(ctx))
+
 	if cfg.Paused {
+		log.Printf("项目状态校验失败 - 项目已停用")
 		return errors.New("project is paused")
 	}
 	if cfg.EnableWritePermission == enableWritePermission {
+		log.Printf("状态校验失败 - 写权限状态已相同: %t", enableWritePermission)
 		return errors.New("write permission status is already the same")
 	}
 
 	cfg.EnableWritePermission = enableWritePermission
+	log.Printf("项目配置更新 - 写权限开关: %t", enableWritePermission)
 	b, _ := json.Marshal(cfg)
 	if err := ctx.GetStub().PutState(projectConfigKey, b); err != nil {
+		log.Printf("项目配置更新存储失败: %v", err)
 		return err
 	}
+	log.Printf("项目配置更新存储成功")
 
-	//payload, _ := json.Marshal(map[string]interface{}{"enableWritePermission": enableWritePermission})
 	payload, _ := json.Marshal(&common.ProjectConfig{
 		ServiceCode:           cfg.ServiceCode,
 		ProjectCode:           cfg.ProjectCode,
 		EnableWritePermission: enableWritePermission,
 	})
+	log.Printf("触发写权限状态变更事件 - 新状态: %t", enableWritePermission)
 	return common.EmitEvent(ctx, "EnableWritePermissionChanged", payload)
 }
 
 // Pause 项目停用
 func (c *PermissionChaincode) Pause(ctx contractapi.TransactionContextInterface) error {
+	log.Printf("开始停用项目")
 	cfg, err := c.getProjectConfig(ctx)
 	if err != nil {
+		log.Printf("获取项目配置失败: %v", err)
 		return err
 	}
 	if !common.IsAdmin(ctx, cfg.Admins) {
+		log.Printf("权限校验失败 - 调用者: %s, 操作: Pause", common.GetCaller(ctx))
 		return errors.New("only admin can pause project")
 	}
+	log.Printf("权限校验通过 - 调用者: %s, 操作: Pause", common.GetCaller(ctx))
 
 	cfg.Paused = true
+	log.Printf("项目配置更新 - 项目状态: 已停用")
 	b, _ := json.Marshal(cfg)
 	if err := ctx.GetStub().PutState(projectConfigKey, b); err != nil {
+		log.Printf("项目配置更新存储失败: %v", err)
 		return err
 	}
+	log.Printf("项目配置更新存储成功")
 
 	// 触发项目停用事件
 	eventPayload, _ := json.Marshal(&common.ProjectConfig{
@@ -333,24 +388,32 @@ func (c *PermissionChaincode) Pause(ctx contractapi.TransactionContextInterface)
 		Paused:      true,
 		Admins:      []string{common.GetCaller(ctx)},
 	})
+	log.Printf("触发项目停用事件")
 	return common.EmitEvent(ctx, "Paused", eventPayload)
 }
 
 // Unpause 项目启用
 func (c *PermissionChaincode) Unpause(ctx contractapi.TransactionContextInterface) error {
+	log.Printf("开始启用项目")
 	cfg, err := c.getProjectConfig(ctx)
 	if err != nil {
+		log.Printf("获取项目配置失败: %v", err)
 		return err
 	}
 	if !common.IsAdmin(ctx, cfg.Admins) {
+		log.Printf("权限校验失败 - 调用者: %s, 操作: Unpause", common.GetCaller(ctx))
 		return errors.New("only admin can unpause project")
 	}
+	log.Printf("权限校验通过 - 调用者: %s, 操作: Unpause", common.GetCaller(ctx))
 
 	cfg.Paused = false
+	log.Printf("项目配置更新 - 项目状态: 已启用")
 	b, _ := json.Marshal(cfg)
 	if err := ctx.GetStub().PutState(projectConfigKey, b); err != nil {
+		log.Printf("项目配置更新存储失败: %v", err)
 		return err
 	}
+	log.Printf("项目配置更新存储成功")
 
 	// 触发项目启用事件
 	eventPayload, _ := json.Marshal(&common.ProjectConfig{
@@ -359,47 +422,53 @@ func (c *PermissionChaincode) Unpause(ctx contractapi.TransactionContextInterfac
 		Paused:      false,
 		Admins:      []string{common.GetCaller(ctx)},
 	})
+	log.Printf("触发项目启用事件")
 	return common.EmitEvent(ctx, "Unpaused", eventPayload)
 }
 
 // TransferAdminRole 转移超级管理员权限
 func (c *PermissionChaincode) TransferAdminRole(ctx contractapi.TransactionContextInterface, newAdmin string) error {
-
+	log.Printf("开始转移管理员权限 - 新管理员: %s", newAdmin)
 	cfg, err := c.getProjectConfig(ctx)
 	if err != nil {
+		log.Printf("获取项目配置失败: %v", err)
 		return err
 	}
 	if !common.IsAdmin(ctx, cfg.Admins) {
+		log.Printf("权限校验失败 - 调用者: %s, 操作: TransferAdminRole", common.GetCaller(ctx))
 		return errors.New("only admin can transfer admin role")
 	}
+	log.Printf("权限校验通过 - 调用者: %s, 操作: TransferAdminRole", common.GetCaller(ctx))
+
 	if strings.TrimSpace(newAdmin) == "" {
+		log.Printf("参数校验失败 - 新管理员为空")
 		return errors.New("new admin cannot be empty")
 	}
 
 	// 检查新管理员是否已在列表中
 	for _, admin := range cfg.Admins {
 		if admin == newAdmin {
+			log.Printf("状态校验失败 - 新管理员已存在: %s", newAdmin)
 			return errors.New("new admin is already in admin list")
 		}
 	}
 
 	cfg.Admins = append(cfg.Admins, newAdmin)
+	log.Printf("管理员列表更新 - 新增管理员: %s, 当前管理员数量: %d", newAdmin, len(cfg.Admins))
 	b, _ := json.Marshal(cfg)
 	if err := ctx.GetStub().PutState(projectConfigKey, b); err != nil {
+		log.Printf("项目配置更新存储失败: %v", err)
 		return err
 	}
+	log.Printf("项目配置更新存储成功")
 
 	// 触发管理员权限转移事件
-	//eventPayload, _ := json.Marshal(&ProjectConfig{
-	//	ServiceCode: cfg.ServiceCode,
-	//	ProjectCode: cfg.ProjectCode,
-	//	Admins:      cfg.Admins, // 包含新添加的管理员
-	//})
 	eventPayload, _ := json.Marshal(map[string]interface{}{
 		"serviceCode": cfg.ServiceCode,
 		"projectCode": cfg.ProjectCode,
 		"oldAdmin":    cfg.Admins,
 		"newAdmin":    newAdmin})
+	log.Printf("触发管理员权限转移事件 - 新管理员: %s", newAdmin)
 	return common.EmitEvent(ctx, "AdminRoleTransfered", eventPayload)
 }
 
@@ -407,19 +476,27 @@ func (c *PermissionChaincode) TransferAdminRole(ctx contractapi.TransactionConte
 
 // BatchOperateSelectorPermissions 批量授权/撤销账户权限
 func (c *PermissionChaincode) BatchOperateSelectorPermissions(ctx contractapi.TransactionContextInterface, accountSelectors []AccountSelector) error {
+	log.Printf("开始批量操作账户权限 - 账户数量: %d", len(accountSelectors))
 	cfg, err := c.getProjectConfig(ctx)
 	if err != nil {
+		log.Printf("获取项目配置失败: %v", err)
 		return err
 	}
 	if !common.IsAdmin(ctx, cfg.Admins) {
+		log.Printf("权限校验失败 - 调用者: %s, 操作: BatchOperateSelectorPermissions", common.GetCaller(ctx))
 		return errors.New("only admin can operate selector permissions")
 	}
+	log.Printf("权限校验通过 - 调用者: %s, 操作: BatchOperateSelectorPermissions", common.GetCaller(ctx))
+
 	if cfg.Paused {
+		log.Printf("项目状态校验失败 - 项目已停用")
 		return errors.New("project is paused")
 	}
 
-	for _, perm := range accountSelectors {
+	for i, perm := range accountSelectors {
+		log.Printf("处理第%d个账户权限 - 账户: %s, 函数数量: %d", i+1, perm.Account, len(perm.FuncNames))
 		if strings.TrimSpace(perm.Account) == "" {
+			log.Printf("参数校验失败 - 账户为空")
 			return errors.New("account cannot be empty")
 		}
 
@@ -428,14 +505,17 @@ func (c *PermissionChaincode) BatchOperateSelectorPermissions(ctx contractapi.Tr
 		b, err := ctx.GetStub().GetState(key)
 		if err != nil || b == nil {
 			selectorMap = make(map[string]bool)
+			log.Printf("创建新账户权限映射 - 账户: %s", perm.Account)
 		} else {
 			_ = json.Unmarshal(b, &selectorMap)
+			log.Printf("获取现有账户权限映射 - 账户: %s, 现有权限数量: %d", perm.Account, len(selectorMap))
 		}
 
 		// 如果FuncNames为空，则删除该账户的所有权限
 		if len(perm.FuncNames) == 0 {
 			// 删除该账户的所有权限
 			ctx.GetStub().DelState(key)
+			log.Printf("删除账户所有权限 - 账户: %s", perm.Account)
 			payload, _ := json.Marshal(map[string]interface{}{
 				"serviceCode": cfg.ServiceCode,
 				"projectCode": cfg.ProjectCode,
@@ -450,6 +530,7 @@ func (c *PermissionChaincode) BatchOperateSelectorPermissions(ctx contractapi.Tr
 			}
 			b, _ = json.Marshal(selectorMap)
 			ctx.GetStub().PutState(key, b)
+			log.Printf("更新账户权限 - 账户: %s, 新增权限: %v", perm.Account, perm.FuncNames)
 
 			// 事件通知
 			payload, _ := json.Marshal(map[string]interface{}{
@@ -462,32 +543,40 @@ func (c *PermissionChaincode) BatchOperateSelectorPermissions(ctx contractapi.Tr
 			_ = common.EmitEvent(ctx, "SelectorPermissionOperated", payload)
 		}
 	}
+	log.Printf("批量操作账户权限完成 - 处理账户数量: %d", len(accountSelectors))
 	return nil
 }
 
 // HasSelectorPermission 查询账户是否有某函数权限
 func (c *PermissionChaincode) HasSelectorPermission(ctx contractapi.TransactionContextInterface, account, funcName string) (bool, error) {
+	log.Printf("查询账户函数权限 - 账户: %s, 函数: %s", account, funcName)
 	if strings.TrimSpace(account) == "" || strings.TrimSpace(funcName) == "" {
+		log.Printf("参数校验失败 - 账户或函数名为空")
 		return false, errors.New("account and funcName cannot be empty")
 	}
 
 	cfg, err := c.getProjectConfig(ctx)
 	if err != nil {
+		log.Printf("获取项目配置失败: %v", err)
 		return false, err
 	}
 	if cfg.Paused {
+		log.Printf("项目状态校验失败 - 项目已停用")
 		return false, errors.New("project is paused")
 	}
 
 	key := selectorPermPrefix + account
 	b, err := ctx.GetStub().GetState(key)
 	if err != nil || b == nil {
+		log.Printf("账户权限查询结果 - 账户: %s, 函数: %s, 结果: 无权限", account, funcName)
 		return false, nil
 	}
 
 	var selectorMap map[string]bool
 	_ = json.Unmarshal(b, &selectorMap)
-	return selectorMap[funcName], nil
+	hasPermission := selectorMap[funcName]
+	log.Printf("账户权限查询结果 - 账户: %s, 函数: %s, 结果: %t", account, funcName, hasPermission)
+	return hasPermission, nil
 }
 
 // GetAllSelectorsForUser 查询账户所有函数权限

@@ -3,11 +3,12 @@ package issuer
 import (
 	"encoding/json"
 	"fmt"
-	"sbp-did-chaincode/chaincode/common"
-	"sbp-did-chaincode/chaincode/did"
+	"log"
+	"sbp-did-chaincode/common"
+	"sbp-did-chaincode/did"
 	"strings"
 
-	"github.com/hyperledger/fabric-contract-api-go/v2/contractapi"
+	"github.com/hyperledger/fabric-contract-api-go/contractapi"
 	"github.com/pkg/errors"
 )
 
@@ -143,61 +144,89 @@ func (c *IssuerChaincode) CheckDid(ctx contractapi.TransactionContextInterface, 
 
 // RegisterIssuer 注册发证方
 func (c *IssuerChaincode) RegisterIssuer(ctx contractapi.TransactionContextInterface, issuerDid, name string) error {
+	log.Printf("开始注册发证方 - 发证方DID: %s, 名称: %s", issuerDid, name)
 	if strings.TrimSpace(issuerDid) == "" || strings.TrimSpace(name) == "" {
+		log.Printf("参数校验失败 - 发证方DID或名称为空")
 		return errors.New("issuerDid and name cannot be empty")
 	}
 	// 获取调用者账户
 	caller := common.GetCaller(ctx)
+	log.Printf("发证方注册 - 调用者: %s", caller)
+
 	// 检查发证方审核状态
 	// 如果审核已启用，只有管理员可以注册发证方
 	// 如果审核未启用，普通用户也可以注册发证方
 	issuerVerificationEnabled, err := c.CheckIssuerVerificationEnabled(ctx, caller)
 	if err != nil || !issuerVerificationEnabled {
+		log.Printf("发证方审核状态检查失败: %v", err)
 		return fmt.Errorf("failed to check issuer verification status: %v", err)
 	}
+	log.Printf("发证方审核状态检查通过 - 审核已启用: %t", issuerVerificationEnabled)
 
 	// 检查写权限
 	hasPermission, err := c.CheckWriteFuncSelectorPermission(ctx, caller, "RegisterIssuer")
 	if err != nil {
+		log.Printf("写权限检查失败: %v", err)
 		return fmt.Errorf("failed to check write permission: %v", err)
 	}
 	if !hasPermission {
+		log.Printf("权限校验失败 - 调用者: %s, 操作: RegisterIssuer", caller)
 		return errors.New("no permission to register issuer")
 	}
+	log.Printf("权限校验通过 - 调用者: %s, 操作: RegisterIssuer", caller)
+
 	// 4. 调用PermissionChaincode合约checkMethod方法，验证DID的method部分
 	err = c.CheckMethod(ctx, issuerDid)
 	if err != nil {
+		log.Printf("DID方法校验失败: %v", err)
 		return fmt.Errorf("DID method validation failed: %v", err)
 	}
+	log.Printf("DID方法校验通过 - 发证方DID: %s", issuerDid)
+
 	// 5. 调用DIDChaincode合约的CheckDid方法，验证DID是否已存在
 	existDid, err := c.CheckDid(ctx, issuerDid)
 	if err != nil {
+		log.Printf("DID存在性检查失败: %v", err)
 		return fmt.Errorf("DID check failed: %v", err)
 	}
 	if !existDid {
+		log.Printf("DID存在性检查失败 - DID不存在: %s", issuerDid)
 		return fmt.Errorf("did %s not found ", issuerDid)
 	}
+	log.Printf("DID存在性检查通过 - DID存在: %s", issuerDid)
+
 	// 6. 校验name是否唯一，不唯一抛出异常并回滚交易。
 	issuerName := issuerNamePrefix + name
 	existIssuerName, err := ctx.GetStub().GetState(issuerName)
 	if err != nil {
+		log.Printf("查询发证方名称失败: %v", err)
 		return err
 	}
 	if existIssuerName != nil {
+		log.Printf("发证方名称校验失败 - 名称已存在: %s", name)
 		return errors.New("issuer name already exists")
 	}
+	log.Printf("发证方名称校验通过 - 名称唯一: %s", name)
+
 	if err := ctx.GetStub().PutState(issuerName, []byte(issuerDid)); err != nil {
+		log.Printf("发证方名称映射存储失败: %v", err)
 		return err
 	}
+	log.Printf("发证方名称映射存储成功 - 名称: %s, DID: %s", name, issuerDid)
+
 	// 7. 校验发证方信息是否存在，存在抛出异常并回滚交易。
 	key := issuerInfoPrefix + issuerDid
 	b, err := ctx.GetStub().GetState(key)
 	if err != nil {
+		log.Printf("查询发证方信息失败: %v", err)
 		return err
 	}
 	if b != nil {
+		log.Printf("发证方信息校验失败 - 发证方已存在: %s", issuerDid)
 		return errors.New("issuer already exists")
 	}
+	log.Printf("发证方信息校验通过 - 发证方不存在: %s", issuerDid)
+
 	info := IssuerInfo{
 		Name:       name,
 		IssuerDid:  issuerDid,
@@ -206,11 +235,15 @@ func (c *IssuerChaincode) RegisterIssuer(ctx contractapi.TransactionContextInter
 	}
 	b, _ = json.Marshal(info)
 	if err := ctx.GetStub().PutState(key, b); err != nil {
+		log.Printf("发证方信息存储失败: %v", err)
 		return err
 	}
+	log.Printf("发证方信息存储成功 - 发证方DID: %s, 名称: %s", issuerDid, name)
+
 	// 获取项目配置信息，用于事件通知
 	cfg, err := c.GetProjectConfig(ctx)
 	if err != nil {
+		log.Printf("获取项目配置失败: %v", err)
 		// 如果获取配置失败，仍然发送事件，但不包含项目信息
 		return common.EmitEvent(ctx, "IssuerRegistered", b)
 	}
@@ -225,74 +258,94 @@ func (c *IssuerChaincode) RegisterIssuer(ctx contractapi.TransactionContextInter
 		"sender":      caller,
 	}
 	eventPayload, _ := json.Marshal(eventData)
+	log.Printf("触发发证方注册事件 - 发证方DID: %s, 名称: %s", issuerDid, name)
 	return common.EmitEvent(ctx, "IssuerRegistered", eventPayload)
 }
 
 // UpdateIssuer 更新发证方
 func (c *IssuerChaincode) UpdateIssuer(ctx contractapi.TransactionContextInterface, issuerDid, name string) error {
+	log.Printf("开始更新发证方 - 发证方DID: %s, 新名称: %s", issuerDid, name)
 	if strings.TrimSpace(issuerDid) == "" || strings.TrimSpace(name) == "" {
+		log.Printf("参数校验失败 - 发证方DID或名称为空")
 		return errors.New("issuerDid and name cannot be empty")
 	}
 	// 获取调用者账户
 	caller := common.GetCaller(ctx)
+	log.Printf("发证方更新 - 调用者: %s", caller)
 
 	// 检查发证方审核状态
 	// 如果审核已启用，只有管理员可以注册发证方
 	// 如果审核未启用，普通用户也可以注册发证方
 	issuerVerificationEnabled, err := c.CheckIssuerVerificationEnabled(ctx, caller)
 	if err != nil || !issuerVerificationEnabled {
+		log.Printf("发证方审核状态检查失败: %v", err)
 		return fmt.Errorf("failed to check issuer verification status: %v", err)
 	}
+	log.Printf("发证方审核状态检查通过 - 审核已启用: %t", issuerVerificationEnabled)
 
 	// 2. 检查写权限
 	hasPermission, err := c.CheckWriteFuncSelectorPermission(ctx, caller, "UpdateIssuer")
 	if err != nil {
+		log.Printf("写权限检查失败: %v", err)
 		return fmt.Errorf("failed to check write permission: %v", err)
 	}
 	if !hasPermission {
+		log.Printf("权限校验失败 - 调用者: %s, 操作: UpdateIssuer", caller)
 		return errors.New("no permission to update issuer")
 	}
+	log.Printf("权限校验通过 - 调用者: %s, 操作: UpdateIssuer", caller)
 
 	// 1. 校验发证方信息是否存在
 	key := issuerInfoPrefix + issuerDid
 	b, err := ctx.GetStub().GetState(key)
 	if err != nil || b == nil {
+		log.Printf("发证方信息校验失败 - 发证方不存在: %s", issuerDid)
 		return errors.New("issuer not found")
 	}
 	var info IssuerInfo
 	_ = json.Unmarshal(b, &info)
-	//if info.Account != caller {
-	//	return errors.New("only creator can update issuer")
-	//}
-	// 传入的名称不能与当前发证方名称一致
+	log.Printf("获取发证方信息成功 - 当前名称: %s", info.Name)
+
+	//传入的名称不能与当前发证方名称一致
 	if info.Name == name {
+		log.Printf("名称校验失败 - 新名称与当前名称相同: %s", name)
 		return errors.New("the provided name cannot be the same as the current issuer name")
 	}
+	log.Printf("名称校验通过 - 新名称: %s, 当前名称: %s", name, info.Name)
+
 	// 3. 校验name是否唯一，不唯一抛出异常并回滚交易
 	issuerName := issuerNamePrefix + name
 	existIssuerName, err := ctx.GetStub().GetState(issuerName)
 	if err != nil {
+		log.Printf("查询发证方名称失败: %v", err)
 		return err
 	}
 	if existIssuerName != nil && string(existIssuerName) != issuerDid {
+		log.Printf("发证方名称校验失败 - 名称已存在: %s", name)
 		return errors.New("issuer name already exists")
 	}
+	log.Printf("发证方名称校验通过 - 名称唯一: %s", name)
 
 	// 4. 更新发证方名称映射
 	if err := ctx.GetStub().PutState(issuerName, []byte(issuerDid)); err != nil {
+		log.Printf("发证方名称映射更新失败: %v", err)
 		return err
 	}
+	log.Printf("发证方名称映射更新成功 - 名称: %s, DID: %s", name, issuerDid)
 
 	// 5. 更新发证方信息
 	info.Name = name
 	b, _ = json.Marshal(info)
 	if err := ctx.GetStub().PutState(key, b); err != nil {
+		log.Printf("发证方信息更新失败: %v", err)
 		return err
 	}
+	log.Printf("发证方信息更新成功 - 发证方DID: %s, 新名称: %s", issuerDid, name)
 
 	// 6. 获取项目配置信息，用于事件通知
 	cfg, err := c.GetProjectConfig(ctx)
 	if err != nil {
+		log.Printf("获取项目配置失败: %v", err)
 		// 如果获取配置失败，仍然发送事件，但不包含项目信息
 		return common.EmitEvent(ctx, "IssuerUpdated", b)
 	}
@@ -307,58 +360,74 @@ func (c *IssuerChaincode) UpdateIssuer(ctx contractapi.TransactionContextInterfa
 		"sender":      caller,
 	}
 	eventPayload, _ := json.Marshal(eventData)
+	log.Printf("触发发证方更新事件 - 发证方DID: %s, 新名称: %s", issuerDid, name)
 	return common.EmitEvent(ctx, "IssuerUpdated", eventPayload)
 }
 
 // ChangeIssuerStatus 启停发证方
 func (c *IssuerChaincode) ChangeIssuerStatus(ctx contractapi.TransactionContextInterface, issuerDid string, isDisabled bool) error {
+	log.Printf("开始变更发证方状态 - 发证方DID: %s, 新状态: %t", issuerDid, isDisabled)
 	if strings.TrimSpace(issuerDid) == "" {
+		log.Printf("参数校验失败 - 发证方DID为空")
 		return errors.New("issuerDid cannot be empty")
 	}
 	// 获取调用者账户
 	caller := common.GetCaller(ctx)
+	log.Printf("发证方状态变更 - 调用者: %s", caller)
 
 	// 检查发证方审核状态
 	// 如果审核已启用，只有管理员可以注册发证方
 	// 如果审核未启用，普通用户也可以注册发证方
 	issuerVerificationEnabled, err := c.CheckIssuerVerificationEnabled(ctx, caller)
 	if err != nil || !issuerVerificationEnabled {
+		log.Printf("发证方审核状态检查失败: %v", err)
 		return fmt.Errorf("failed to check issuer verification status: %v", err)
 	}
+	log.Printf("发证方审核状态检查通过 - 审核已启用: %t", issuerVerificationEnabled)
 
 	// 2. 检查写权限
 	hasPermission, err := c.CheckWriteFuncSelectorPermission(ctx, caller, "ChangeIssuerStatus")
 	if err != nil {
+		log.Printf("写权限检查失败: %v", err)
 		return fmt.Errorf("failed to check write permission: %v", err)
 	}
 	if !hasPermission {
+		log.Printf("权限校验失败 - 调用者: %s, 操作: ChangeIssuerStatus", caller)
 		return errors.New("no permission to change issuer status")
 	}
+	log.Printf("权限校验通过 - 调用者: %s, 操作: ChangeIssuerStatus", caller)
+
 	// 1. 校验发证方信息是否存在
 	key := issuerInfoPrefix + issuerDid
 	b, err := ctx.GetStub().GetState(key)
 	if err != nil || b == nil {
+		log.Printf("发证方信息校验失败 - 发证方不存在: %s", issuerDid)
 		return errors.New("issuer not found")
 	}
 	var info IssuerInfo
 	_ = json.Unmarshal(b, &info)
-	//if info.Account != caller {
-	//	return errors.New("only creator can change status")
-	//}
-	// 传入的名称不能与当前发证方名称一致
+	log.Printf("获取发证方信息成功 - 当前状态: %t", info.IsDisabled)
+
+	//传入的名称不能与当前发证方名称一致
 	if info.IsDisabled == isDisabled {
+		log.Printf("状态校验失败 - 新状态与当前状态相同: %t", isDisabled)
 		return errors.New("the provided disabled cannot be the same as the current issuer disabled")
 	}
+	log.Printf("状态校验通过 - 新状态: %t, 当前状态: %t", isDisabled, info.IsDisabled)
+
 	// 3. 更新发证方状态
 	info.IsDisabled = isDisabled
 	b, _ = json.Marshal(info)
 	if err := ctx.GetStub().PutState(key, b); err != nil {
+		log.Printf("发证方状态更新失败: %v", err)
 		return err
 	}
+	log.Printf("发证方状态更新成功 - 发证方DID: %s, 新状态: %t", issuerDid, isDisabled)
 
 	// 4. 获取项目配置信息，用于事件通知
 	cfg, err := c.GetProjectConfig(ctx)
 	if err != nil {
+		log.Printf("获取项目配置失败: %v", err)
 		// 如果获取配置失败，仍然发送事件，但不包含项目信息
 		return common.EmitEvent(ctx, "IssuerStatusChanged", b)
 	}
@@ -368,18 +437,18 @@ func (c *IssuerChaincode) ChangeIssuerStatus(ctx contractapi.TransactionContextI
 		"serviceCode": cfg.ServiceCode,
 		"projectCode": cfg.ProjectCode,
 		"issuerDid":   issuerDid,
-		//"name":        info.Name,
-		"isDisabled": isDisabled,
-		"sender":     caller,
+		"isDisabled":  isDisabled,
+		"sender":      caller,
 	}
 	eventPayload, _ := json.Marshal(eventData)
+	log.Printf("触发发证方状态变更事件 - 发证方DID: %s, 新状态: %t", issuerDid, isDisabled)
 	return common.EmitEvent(ctx, "IssuerStatusChanged", eventPayload)
 }
 
 // GetIssuerInfo 查询发证方信息
-func (c *IssuerChaincode) GetIssuerInfo(ctx contractapi.TransactionContextInterface, issuerDid string) (string, bool, error) {
+func (c *IssuerChaincode) GetIssuerInfo(ctx contractapi.TransactionContextInterface, issuerDid string) (info IssuerInfo, err error) {
 	if strings.TrimSpace(issuerDid) == "" {
-		return "", false, errors.New("issuerDid cannot be empty")
+		return info, errors.New("issuerDid cannot be empty")
 	}
 	// 获取调用者账户
 	caller := common.GetCaller(ctx)
@@ -388,25 +457,25 @@ func (c *IssuerChaincode) GetIssuerInfo(ctx contractapi.TransactionContextInterf
 	// 如果审核未启用，普通用户也可以注册发证方
 	issuerVerificationEnabled, err := c.CheckIssuerVerificationEnabled(ctx, caller)
 	if err != nil || !issuerVerificationEnabled {
-		return "", false, fmt.Errorf("failed to check issuer verification status: %v", err)
+		return info, fmt.Errorf("failed to check issuer verification status: %v", err)
 	}
 
 	// 2. 检查读权限
 	hasPermission, err := c.CheckQueryFuncSelectorPermission(ctx, caller, "GetIssuerInfo")
 	if err != nil {
-		return "", false, fmt.Errorf("failed to check query permission: %v", err)
+		return info, fmt.Errorf("failed to check query permission: %v", err)
 	}
 	if !hasPermission {
-		return "", false, errors.New("no permission to get issuer info")
+		return info, errors.New("no permission to get issuer info")
 	}
 	key := issuerInfoPrefix + issuerDid
 	b, err := ctx.GetStub().GetState(key)
 	if err != nil || b == nil {
-		return "", false, errors.New("issuer not found")
+		return info, errors.New("issuer not found")
 	}
-	var info IssuerInfo
-	_ = json.Unmarshal(b, &info)
-	return info.Name, info.IsDisabled, nil
+	//var info IssuerInfo
+	//_ = json.Unmarshal(b, &info)
+	return info, nil
 }
 
 // CheckIssuer 校验发证方是否存在,且状态正常
@@ -647,32 +716,32 @@ func (c *IssuerChaincode) ChangeVCTemplateStatus(ctx contractapi.TransactionCont
 }
 
 // GetVCTemplateInfo 查询VC模板信息
-func (c *IssuerChaincode) GetVCTemplateInfo(ctx contractapi.TransactionContextInterface, vcTemplateId string) (string, bool, error) {
+func (c *IssuerChaincode) GetVCTemplateInfo(ctx contractapi.TransactionContextInterface, vcTemplateId string) (tpl VcTemplateInfo, err error) {
 	if strings.TrimSpace(vcTemplateId) == "" {
-		return "", false, errors.New("vcTemplateId cannot be empty")
+		return tpl, errors.New("vcTemplateId cannot be empty")
 	}
 	// 获取调用者账户
 	caller := common.GetCaller(ctx)
 	vcTemplateVerificationEnabled, err := c.CheckVCTemplateVerificationEnabled(ctx, caller)
 	if err != nil || !vcTemplateVerificationEnabled {
-		return "", true, fmt.Errorf("failed to check vc template verification status: %v", err)
+		return tpl, fmt.Errorf("failed to check vc template verification status: %v", err)
 	}
 	// 检查写权限
 	hasPermission, err := c.CheckQueryFuncSelectorPermission(ctx, caller, "GetVCTemplateInfo")
 	if err != nil {
-		return "", true, fmt.Errorf("permission check failed: %v", err)
+		return tpl, fmt.Errorf("permission check failed: %v", err)
 	}
 	if !hasPermission {
-		return "", true, errors.New("no permission to change vc template status")
+		return tpl, errors.New("no permission to change vc template status")
 	}
 	key := vcTemplateInfoPrefix + vcTemplateId
 	b, err := ctx.GetStub().GetState(key)
 	if err != nil || b == nil {
-		return "", false, errors.New("vc template not found")
+		return tpl, errors.New("vc template not found")
 	}
-	var tpl VcTemplateInfo
-	_ = json.Unmarshal(b, &tpl)
-	return tpl.VcTemplateData, tpl.IsDisabled, nil
+	//var tpl VcTemplateInfo
+	//_ = json.Unmarshal(b, &tpl)
+	return tpl, nil
 }
 
 // CheckVCTemplate 校验VC模板是否存在
