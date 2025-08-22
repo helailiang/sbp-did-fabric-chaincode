@@ -1,0 +1,8 @@
+NodeOUs:
+    Enable: true
+    ClientOUIdentifier:
+      Certificate: intermediatecerts/ca-node1-private-bsnbase-com-1.pem
+      OrganizationalUnitIdentifier: client
+    PeerOUIdentifier:
+      Certificate: intermediatecerts/ca-node1-private-bsnbase-com-1.pem
+      OrganizationalUnitIdentifier: peer
